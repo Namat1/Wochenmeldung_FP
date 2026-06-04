@@ -55,21 +55,31 @@ def _name_sort_key(record) -> tuple:
     return (fold(record["Nachname"]), fold(record["Vorname"]))
 
 
+def _is_tour_row(df: pd.DataFrame, idx: int) -> bool:
+    """True, wenn die Zeile idx eine 'Tour'-Zeile ist (Spalte D == 'Tour')."""
+    if idx < 0 or idx >= len(df.index):
+        return False
+    return _clean(df.iloc[idx, 3]).lower() == "tour"
+
+
 def extract_grouped_data(df: pd.DataFrame) -> pd.DataFrame:
-    """Liest ALLE Fahrer (ohne Filter) und ordnet sie einer Kategorie zu."""
-    col_b = df.iloc[:, 1].astype(str).str.strip().str.lower()
+    """Liest ALLE Fahrer (ohne Filter) und ordnet sie einer Kategorie zu.
 
-    if "adler" not in col_b.values or "steckel" not in col_b.values:
-        st.error("'adler' oder 'steckel' wurden in Spalte B nicht gefunden.")
-        st.stop()
-
-    start_index = col_b[col_b == "adler"].index[0]
-    end_index = col_b[col_b == "steckel"].index[0]
-
+    Keine festen Namensanker mehr: Eine echte Fahrerzeile wird daran erkannt,
+    dass Nachname + Vorname gefüllt sind UND direkt darunter eine 'Tour'-Zeile
+    steht. Kopf-, Beschriftungs- und Leerzeilen haben keine Tour-Zeile darunter
+    und werden automatisch übersprungen. Dadurch ist es egal, wer als erster
+    oder letzter im Blatt steht oder ob Fahrer dazukommen/wegfallen.
+    """
     rows = []
     current_category = "Fahrer"
 
-    for i in range(start_index, end_index + 1):
+    for i in range(len(df.index)):
+        # Ab dem 'Spedition'-Header folgen nur noch Fremd-/Speditionsfahrer,
+        # die nicht zur Belegschaft gehören -> hier aufhören.
+        if _clean(df.iloc[i, 0]).lower().startswith("spedition"):
+            break
+
         row_text = " ".join(_clean(v) for v in df.iloc[i].tolist()).lower()
 
         # Abschnittsmarker erkennen
@@ -86,7 +96,11 @@ def extract_grouped_data(df: pd.DataFrame) -> pd.DataFrame:
         lastname = _clean(df.iloc[i, 1])
         firstname = _clean(df.iloc[i, 2])
         if not lastname or not firstname:
-            continue  # Tour-Zeilen / Platzhalter ohne Namen
+            continue  # keine Namenszeile (Tour-Zeilen, Leerzeilen, Platzhalter)
+
+        # Eine echte Fahrerzeile hat direkt darunter eine 'Tour'-Zeile.
+        if not _is_tour_row(df, i + 1):
+            continue  # z. B. Kopfzeile 'Name/Vorname', Beschriftungszeilen
 
         activities_row = i + 1
         row = {"Kategorie": current_category,
@@ -100,6 +114,10 @@ def extract_grouped_data(df: pd.DataFrame) -> pd.DataFrame:
             else:
                 row[day] = ""
         rows.append(row)
+
+    if not rows:
+        st.error("Keine Fahrerzeilen gefunden. Stimmt das Blatt 'Druck Fahrer' und sein Aufbau?")
+        st.stop()
 
     return pd.DataFrame(rows)
 
