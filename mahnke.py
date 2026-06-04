@@ -25,6 +25,7 @@ DAY_DEFINITIONS = [
 ]
 
 SECTION_ORDER = [
+    "Dispo",
     "Fahrer",
     "Hoffahrer + Waschteam",
     "Ausbildung zum Berufskraftfahrer",
@@ -37,7 +38,18 @@ SECTION_MARKERS = [
     ("Aushilfsfahrer", ["aushilfsfahrer"]),
 ]
 
-# Diese Disponenten werden nicht mehr in die Meldung übernommen.
+# Diese Disponenten werden manuell als rote Dispo-Zeilen eingefügt.
+# Falls sie zusätzlich im Blatt stehen, werden sie dort nicht doppelt übernommen.
+DISPO_PEOPLE = [
+    ("Aniol", "Przemyslaw"),
+    ("Carstensen", "Martin"),
+    ("Lau", "Eike"),
+    ("Ohlenroth", "Nadja"),
+    ("Packmohr", "Gina"),
+    ("Pham Manh", "Chris"),
+    ("Schulz", "Julian"),
+]
+
 EXCLUDED_PEOPLE = {
     ("aniol", "przemyslaw"),
     ("carstensen", "martin"),
@@ -363,6 +375,22 @@ def apply_dates_to_columns(df: pd.DataFrame, dates: list[str]) -> pd.DataFrame:
     return output.rename(columns=rename_map)
 
 
+def create_dispo_rows() -> pd.DataFrame:
+    """Feste rote Dispo-Zeilen oben in die Meldung einfügen."""
+    rows = []
+    for lastname, firstname in DISPO_PEOPLE:
+        row = {
+            "Kategorie": "Dispo",
+            "Nachname": lastname,
+            "Vorname": firstname,
+        }
+        for weekday, _, _ in DAY_DEFINITIONS:
+            row[weekday] = ""
+        rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
 # ------------------------------------------------------------
 # Excel-Formatierung
 # ------------------------------------------------------------
@@ -371,6 +399,8 @@ def style_excel(ws, report_week: int):
     header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
     data_fill_white = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
     data_fill_light = PatternFill(start_color="F8F9FA", end_color="F8F9FA", fill_type="solid")
+    dispo_fill_dark = PatternFill(start_color="E74C3C", end_color="E74C3C", fill_type="solid")
+    dispo_fill_light = PatternFill(start_color="F1948A", end_color="F1948A", fill_type="solid")
     aushilfe_fill_dark = PatternFill(start_color="27AE60", end_color="27AE60", fill_type="solid")
     aushilfe_fill_light = PatternFill(start_color="82E0AA", end_color="82E0AA", fill_type="solid")
     category_fill = PatternFill(start_color="D9EAF7", end_color="D9EAF7", fill_type="solid")
@@ -431,7 +461,10 @@ def style_excel(ws, report_week: int):
         base_fill = data_fill_light if row_idx % 2 == 0 else data_fill_white
         base_font = Font(size=10, color="2C3E50")
 
-        if category == normalize_text("Aushilfsfahrer") or (lastname, firstname) in green_names:
+        if category == normalize_text("Dispo"):
+            base_fill = dispo_fill_dark if row_idx % 2 == 0 else dispo_fill_light
+            base_font = Font(size=10, color="FFFFFF" if row_idx % 2 == 0 else "2C3E50", bold=True)
+        elif category == normalize_text("Aushilfsfahrer") or (lastname, firstname) in green_names:
             base_fill = aushilfe_fill_dark if row_idx % 2 == 0 else aushilfe_fill_light
             base_font = Font(size=10, color="FFFFFF" if row_idx % 2 == 0 else "2C3E50", bold=True)
 
@@ -444,12 +477,15 @@ def style_excel(ws, report_week: int):
             if cell.value:
                 max_text_length = max(max_text_length, len(str(cell.value)))
 
-        # Kategorie optisch hervorheben
-        ws.cell(row=row_idx, column=1).fill = category_fill
-        ws.cell(row=row_idx, column=1).font = Font(size=10, color="1F4E78", bold=True)
+        # Kategorie optisch hervorheben, außer bei Dispo-Zeilen.
+        if category != normalize_text("Dispo"):
+            ws.cell(row=row_idx, column=1).fill = category_fill
+            ws.cell(row=row_idx, column=1).font = Font(size=10, color="1F4E78", bold=True)
 
-        # Zeilenhöhe an Inhalt anpassen, aber nicht übertreiben.
-        if max_text_length > 55:
+        # Zeilenhöhe an Inhalt anpassen, aber nicht übertreiben. Dispo bleibt kompakt.
+        if category == normalize_text("Dispo"):
+            ws.row_dimensions[row_idx].height = 24
+        elif max_text_length > 55:
             ws.row_dimensions[row_idx].height = 44
         elif max_text_length > 35:
             ws.row_dimensions[row_idx].height = 34
@@ -491,7 +527,7 @@ def style_excel(ws, report_week: int):
 # ------------------------------------------------------------
 st.set_page_config(page_title="Wochenarbeitsbericht Fuhrpark", layout="wide")
 st.title("Wochenarbeitsbericht Fuhrpark")
-st.info("Disponenten und Speditions-/Dienstleister-Zeilen werden nicht übernommen. Ausgewertet werden relevante Einträge aus dem Blatt 'Druck Fahrer'.")
+st.info("Die roten Dispo-Zeilen werden oben eingefügt und müssen manuell eingetragen werden. Speditions-/Dienstleister-Zeilen werden nicht übernommen. Ausgewertet wird das Blatt 'Druck Fahrer'.")
 
 uploaded_file = st.file_uploader("Lade eine Excel-Datei hoch", type=["xlsx"])
 
@@ -515,13 +551,13 @@ if uploaded_file:
     progress_status.text("Excel-Daten geladen.")
     progress_bar.progress(30)
 
-    progress_status.text("Lese Fahrer, Hoffahrer, Ausbildung und Aushilfsfahrer...")
-    extracted_data = extract_grouped_work_data(data)
+    progress_status.text("Lese Dispo, Fahrer, Hoffahrer, Ausbildung und Aushilfsfahrer...")
+    extracted_driver_data = extract_grouped_work_data(data)
+    extracted_data = pd.concat([create_dispo_rows(), extracted_driver_data], ignore_index=True)
     progress_bar.progress(60)
 
-    if extracted_data.empty:
-        st.warning("Es wurden keine relevanten Einträge gefunden.")
-        st.stop()
+    if extracted_driver_data.empty:
+        st.warning("Es wurden außer den Dispo-Zeilen keine relevanten Fahrer-Einträge gefunden.")
 
     dates = create_header_with_dates(data)
 
