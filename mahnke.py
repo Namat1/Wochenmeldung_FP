@@ -37,7 +37,54 @@ SECTION_MARKERS = [
     ("Aushilfsfahrer", ["aushilfsfahrer"]),
 ]
 
-# Diese Begriffe werden übernommen. Es werden auch Abwandlungen erkannt,
+# Diese Disponenten werden nicht mehr in die Meldung übernommen.
+EXCLUDED_PEOPLE = {
+    ("aniol", "przemyslaw"),
+    ("carstensen", "martin"),
+    ("lau", "eike"),
+    ("ohlenroth", "nadja"),
+    ("packmohr", "gina"),
+    ("pham manh", "chris"),
+    ("schulz", "julian"),
+}
+
+# Diese Speditions-/Dienstleister-Zeilen werden ebenfalls ignoriert.
+# Wichtig: "Maas Michael" als Fahrer bleibt drin. Ausgeschlossen wird nur "Sped. Maas".
+EXCLUDED_LABELS = {
+    "spedition meyer 1",
+    "spedition meyer 2 36er",
+    "spedition meyer 3",
+    "spedition meyer 4",
+    "spedition meyer 5",
+    "spedition meyer sz",
+    "paasch reinke 1",
+    "paasch reinke 2",
+    "paasch reinke 3",
+    "devries 1",
+    "de vries 1",
+    "spedition ihde",
+    "insellogistik 1",
+    "insellogistik 2",
+    "zippel logistik t1",
+    "zippel logistik t2",
+    "zippel logistik t3",
+    "ch holtz t1",
+    "ch holtz t2",
+    "ch holtz t3",
+    "kudex 1",
+    "kudex 2",
+    "kudex 3",
+    "kudex 4",
+    "pfenning 1",
+    "pfenning 2",
+    "t d",
+    "sped maas",
+    "nordfrost",
+    "emons",
+    "thermotraffic",
+}
+
+# Diese Begriffe werden übernommen. Abwandlungen werden mit erkannt,
 # zum Beispiel krank, krankmeldung, urlaub, urlaubstag, modulschulung usw.
 RELEVANT_PATTERNS = [
     r"\bonboarding\w*\b",
@@ -85,6 +132,13 @@ def normalize_text(value) -> str:
     text = text.lower()
     text = re.sub(r"\s+", " ", text).strip()
     return text
+
+
+def key_text(value) -> str:
+    """Textschlüssel ohne Satzzeichen für Ausschlusslisten."""
+    text = normalize_text(value)
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def clean_output(value) -> str:
@@ -136,6 +190,14 @@ def is_relevant_entry(value) -> bool:
     return any(re.search(pattern, text) for pattern in RELEVANT_PATTERNS)
 
 
+def row_has_excluded_label(row_values) -> bool:
+    row_key = key_text(" ".join(clean_output(value) for value in row_values if clean_output(value)))
+    if not row_key:
+        return False
+
+    return any(label in row_key for label in EXCLUDED_LABELS)
+
+
 def get_section_marker(row_values) -> str | None:
     row_text = " ".join(normalize_text(value) for value in row_values if normalize_text(value))
     if not row_text:
@@ -149,9 +211,17 @@ def get_section_marker(row_values) -> str | None:
 
 
 def is_employee_row(df: pd.DataFrame, row_idx: int) -> bool:
+    row_values = df.iloc[row_idx].tolist()
+
+    if row_has_excluded_label(row_values):
+        return False
+
     lastname = normalize_text(safe_cell(df, row_idx, 1))
     firstname = normalize_text(safe_cell(df, row_idx, 2))
     personal_number = normalize_text(safe_cell(df, row_idx, 3))
+
+    if (lastname, firstname) in EXCLUDED_PEOPLE:
+        return False
 
     if not lastname or not firstname:
         return False
@@ -205,33 +275,7 @@ def extract_day_entries(df: pd.DataFrame, driver_row_idx: int, col1: int, col2: 
 # ------------------------------------------------------------
 # Daten aus Druck Fahrer extrahieren
 # ------------------------------------------------------------
-def create_manual_rows() -> pd.DataFrame:
-    manual_people = [
-        ("Carstensen", "Martin"),
-        ("Lau", "Eike"),
-        ("Pham Manh", "Chris"),
-        ("Ohlenroth", "Nadja"),
-        ("Schulz", "Julian"),
-        ("Aniol", "Przemyslaw"),
-        ("Packmohr", "Gina"),
-    ]
-
-    rows = []
-    for lastname, firstname in manual_people:
-        row = {
-            "Kategorie": "Fahrer",
-            "Nachname": lastname,
-            "Vorname": firstname,
-            "Manuell": True,
-        }
-        for weekday, _, _ in DAY_DEFINITIONS:
-            row[weekday] = ""
-        rows.append(row)
-
-    return pd.DataFrame(rows)
-
-
-def extract_grouped_work_data(df: pd.DataFrame, include_manual_rows: bool = True) -> pd.DataFrame:
+def extract_grouped_work_data(df: pd.DataFrame) -> pd.DataFrame:
     result_rows = []
     current_section = "Fahrer"
 
@@ -251,33 +295,33 @@ def extract_grouped_work_data(df: pd.DataFrame, include_manual_rows: bool = True
             "Kategorie": current_section,
             "Nachname": lastname,
             "Vorname": firstname,
-            "Manuell": False,
         }
 
+        has_relevant_entry = False
         for weekday, col1, col2 in DAY_DEFINITIONS:
-            row[weekday] = extract_day_entries(df, row_idx, col1, col2)
+            entry = extract_day_entries(df, row_idx, col1, col2)
+            row[weekday] = entry
+            if entry:
+                has_relevant_entry = True
 
-        result_rows.append(row)
+        # Nur Fahrer übernehmen, bei denen mindestens ein relevanter Eintrag gefunden wurde.
+        if has_relevant_entry:
+            result_rows.append(row)
 
     extracted = pd.DataFrame(result_rows)
 
-    if include_manual_rows:
-        manual_rows = create_manual_rows()
-        extracted = pd.concat([manual_rows, extracted], ignore_index=True)
-
     if extracted.empty:
-        columns = ["Kategorie", "Nachname", "Vorname", "Manuell"] + [weekday for weekday, _, _ in DAY_DEFINITIONS]
+        columns = ["Kategorie", "Nachname", "Vorname"] + [weekday for weekday, _, _ in DAY_DEFINITIONS]
         return pd.DataFrame(columns=columns)
 
     # Reihenfolge festlegen, damit die Blöcke sauber untereinander stehen.
     extracted["_section_order"] = extracted["Kategorie"].apply(
         lambda value: SECTION_ORDER.index(value) if value in SECTION_ORDER else 999
     )
-    extracted["_manual_order"] = extracted["Manuell"].apply(lambda value: 0 if value else 1)
     extracted = extracted.sort_values(
-        by=["_section_order", "_manual_order", "Nachname", "Vorname"],
+        by=["_section_order", "Nachname", "Vorname"],
         kind="stable",
-    ).drop(columns=["_section_order", "_manual_order"])
+    ).drop(columns=["_section_order"])
 
     return extracted.reset_index(drop=True)
 
@@ -327,8 +371,6 @@ def style_excel(ws, report_week: int):
     header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
     data_fill_white = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
     data_fill_light = PatternFill(start_color="F8F9FA", end_color="F8F9FA", fill_type="solid")
-    manual_fill_dark = PatternFill(start_color="E74C3C", end_color="E74C3C", fill_type="solid")
-    manual_fill_light = PatternFill(start_color="F1948A", end_color="F1948A", fill_type="solid")
     aushilfe_fill_dark = PatternFill(start_color="27AE60", end_color="27AE60", fill_type="solid")
     aushilfe_fill_light = PatternFill(start_color="82E0AA", end_color="82E0AA", fill_type="solid")
     category_fill = PatternFill(start_color="D9EAF7", end_color="D9EAF7", fill_type="solid")
@@ -371,17 +413,7 @@ def style_excel(ws, report_week: int):
             cell.font = Font(bold=True, size=11, color="FFFFFF")
             cell.fill = header_fill
             cell.border = medium_border
-    ws.row_dimensions[3].height = 28
-
-    manual_names = {
-        ("carstensen", "martin"),
-        ("lau", "eike"),
-        ("pham manh", "chris"),
-        ("ohlenroth", "nadja"),
-        ("schulz", "julian"),
-        ("aniol", "przemyslaw"),
-        ("packmohr", "gina"),
-    }
+    ws.row_dimensions[3].height = 32
 
     green_names = {
         ("kleiber", "lutz"),
@@ -399,30 +431,36 @@ def style_excel(ws, report_week: int):
         base_fill = data_fill_light if row_idx % 2 == 0 else data_fill_white
         base_font = Font(size=10, color="2C3E50")
 
-        if (lastname, firstname) in manual_names:
-            base_fill = manual_fill_dark if row_idx % 2 == 0 else manual_fill_light
-            base_font = Font(size=10, color="FFFFFF" if row_idx % 2 == 0 else "2C3E50", bold=True)
-
         if category == normalize_text("Aushilfsfahrer") or (lastname, firstname) in green_names:
             base_fill = aushilfe_fill_dark if row_idx % 2 == 0 else aushilfe_fill_light
             base_font = Font(size=10, color="FFFFFF" if row_idx % 2 == 0 else "2C3E50", bold=True)
 
+        max_text_length = 0
         for cell in ws[row_idx]:
             cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
             cell.font = base_font
             cell.fill = base_fill
             cell.border = thin_border
+            if cell.value:
+                max_text_length = max(max_text_length, len(str(cell.value)))
 
         # Kategorie optisch hervorheben
         ws.cell(row=row_idx, column=1).fill = category_fill
         ws.cell(row=row_idx, column=1).font = Font(size=10, color="1F4E78", bold=True)
-        ws.row_dimensions[row_idx].height = 22
 
-    # Spaltenbreite
+        # Zeilenhöhe an Inhalt anpassen, aber nicht übertreiben.
+        if max_text_length > 55:
+            ws.row_dimensions[row_idx].height = 44
+        elif max_text_length > 35:
+            ws.row_dimensions[row_idx].height = 34
+        else:
+            ws.row_dimensions[row_idx].height = 24
+
+    # Spaltenbreite sauber setzen
     column_min_widths = {
-        1: 26,  # Kategorie
-        2: 18,  # Nachname
-        3: 16,  # Vorname
+        1: 28,  # Kategorie
+        2: 20,  # Nachname
+        3: 18,  # Vorname
     }
 
     for col_idx, col in enumerate(ws.columns, start=1):
@@ -433,9 +471,15 @@ def style_excel(ws, report_week: int):
             if cell.value:
                 max_length = max(max_length, len(str(cell.value)))
 
-        calculated_width = max_length + 4
-        min_width = column_min_widths.get(col_idx, 16)
-        adjusted_width = min(max(calculated_width, min_width), 60)
+        if col_idx <= 3:
+            min_width = column_min_widths[col_idx]
+            max_width = 34
+        else:
+            min_width = 22
+            max_width = 42
+
+        calculated_width = max_length + 3
+        adjusted_width = min(max(calculated_width, min_width), max_width)
         ws.column_dimensions[col_letter].width = adjusted_width
 
     ws.freeze_panes = "A4"
@@ -447,10 +491,9 @@ def style_excel(ws, report_week: int):
 # ------------------------------------------------------------
 st.set_page_config(page_title="Wochenarbeitsbericht Fuhrpark", layout="wide")
 st.title("Wochenarbeitsbericht Fuhrpark")
-st.info("Die rot gefärbten Zeilen müssen manuell eingetragen werden. Dispo!")
+st.info("Disponenten und Speditions-/Dienstleister-Zeilen werden nicht übernommen. Ausgewertet werden relevante Einträge aus dem Blatt 'Druck Fahrer'.")
 
 uploaded_file = st.file_uploader("Lade eine Excel-Datei hoch", type=["xlsx"])
-include_manual_rows = st.checkbox("Manuelle Dispo-Zeilen oben einfügen", value=True)
 
 if uploaded_file:
     progress_bar = st.progress(0)
@@ -473,11 +516,11 @@ if uploaded_file:
     progress_bar.progress(30)
 
     progress_status.text("Lese Fahrer, Hoffahrer, Ausbildung und Aushilfsfahrer...")
-    extracted_data = extract_grouped_work_data(data, include_manual_rows=include_manual_rows)
+    extracted_data = extract_grouped_work_data(data)
     progress_bar.progress(60)
 
     if extracted_data.empty:
-        st.warning("Es wurden keine Fahrerzeilen gefunden.")
+        st.warning("Es wurden keine relevanten Einträge gefunden.")
         st.stop()
 
     dates = create_header_with_dates(data)
@@ -488,8 +531,7 @@ if uploaded_file:
         st.error(str(exc))
         st.stop()
 
-    output_data = extracted_data.drop(columns=["Manuell"], errors="ignore")
-    output_data = apply_dates_to_columns(output_data, dates)
+    output_data = apply_dates_to_columns(extracted_data, dates)
 
     excel_filename = f"Fuhrpark_Meldung_KW_{report_week}.xlsx"
 
