@@ -158,16 +158,19 @@ def style_excel(ws, calendar_week):
             bar, row_color = GROUP_COLORS[a_val]
             current_row_fill = row_color
             band_index = 0
-            # zuerst Inhalt der Spalten B..letzte leeren, dann mergen
-            for c in range(2, last_col + 1):
-                ws.cell(r, c).value = None
+            bar_fill = PatternFill("solid", fgColor=bar)
+            # Rahmen + Füllung auf ALLE Zellen des Balkens setzen, sonst ist
+            # der Rahmen der verbundenen Zelle unten/rechts unvollständig.
+            for c in range(1, last_col + 1):
+                cc = ws.cell(r, c)
+                cc.value = None
+                cc.fill = bar_fill
+                cc.border = thin
             ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=last_col)
             cell = ws.cell(r, 1)
             cell.value = a_val
-            cell.fill = PatternFill("solid", fgColor=bar)
             cell.font = Font(bold=True, size=12, color="FFFFFF")
             cell.alignment = Alignment(horizontal="left", vertical="center", indent=1)
-            cell.border = medium
             ws.row_dimensions[r].height = 22
             continue
 
