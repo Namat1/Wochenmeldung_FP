@@ -60,6 +60,17 @@ EXCLUDED_PEOPLE = {
     ("schulz", "julian"),
 }
 
+# Diese Personen werden als feste Zeilen ganz unten angehängt (immer sichtbar,
+# unabhängig von relevanten Eintragungen). Sie werden aus der normalen
+# Auswertung herausgenommen, damit sie nicht doppelt erscheinen.
+PINNED_LAST_PEOPLE = [
+    ("Steckel", "Wolfgang"),
+]
+
+PINNED_LAST_KEYS = {
+    ("steckel", "wolfgang"),
+}
+
 # Diese Speditions-/Dienstleister-Zeilen werden ebenfalls ignoriert.
 # Wichtig: "Maas Michael" als Fahrer bleibt drin. Ausgeschlossen wird nur "Sped. Maas".
 EXCLUDED_LABELS = {
@@ -235,6 +246,9 @@ def is_employee_row(df: pd.DataFrame, row_idx: int) -> bool:
     if (lastname, firstname) in EXCLUDED_PEOPLE:
         return False
 
+    if (lastname, firstname) in PINNED_LAST_KEYS:
+        return False
+
     if not lastname or not firstname:
         return False
 
@@ -391,8 +405,20 @@ def create_dispo_rows() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-# ------------------------------------------------------------
-# Excel-Formatierung
+def create_trailing_rows() -> pd.DataFrame:
+    """Feste Zeilen ganz unten anhängen (z. B. Steckel als letzte Zeile)."""
+    rows = []
+    for lastname, firstname in PINNED_LAST_PEOPLE:
+        row = {
+            "Kategorie": "Aushilfsfahrer",
+            "Nachname": lastname,
+            "Vorname": firstname,
+        }
+        for weekday, _, _ in DAY_DEFINITIONS:
+            row[weekday] = ""
+        rows.append(row)
+
+    return pd.DataFrame(rows)
 # ------------------------------------------------------------
 def style_excel(ws, report_week: int):
     title_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
@@ -553,7 +579,10 @@ if uploaded_file:
 
     progress_status.text("Lese Dispo, Fahrer, Hoffahrer, Ausbildung und Aushilfsfahrer...")
     extracted_driver_data = extract_grouped_work_data(data)
-    extracted_data = pd.concat([create_dispo_rows(), extracted_driver_data], ignore_index=True)
+    extracted_data = pd.concat(
+        [create_dispo_rows(), extracted_driver_data, create_trailing_rows()],
+        ignore_index=True,
+    )
     progress_bar.progress(60)
 
     if extracted_driver_data.empty:
