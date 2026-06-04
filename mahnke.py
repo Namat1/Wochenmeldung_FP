@@ -1,3 +1,4 @@
+import unicodedata
 import streamlit as st
 import pandas as pd
 from openpyxl import load_workbook
@@ -41,6 +42,17 @@ GROUP_COLORS = {
 def _clean(value) -> str:
     text = str(value).strip()
     return "" if text.lower() in {"none", "nan", "nat"} else text
+
+
+def _name_sort_key(record) -> tuple:
+    """Alphabetische Sortierung nach Nachname, dann Vorname (deutsche Umlaute:
+    ä->a, ö->o, ü->u, ß->ss)."""
+    def fold(text: str) -> str:
+        text = text.lower().replace("ß", "ss")
+        text = unicodedata.normalize("NFKD", text)
+        return "".join(c for c in text if not unicodedata.combining(c))
+
+    return (fold(record["Nachname"]), fold(record["Vorname"]))
 
 
 def extract_grouped_data(df: pd.DataFrame) -> pd.DataFrame:
@@ -106,6 +118,10 @@ def build_output(df: pd.DataFrame) -> pd.DataFrame:
         "Auszubildende": df[df["Kategorie"] == "Auszubildende"].drop(columns="Kategorie").to_dict("records"),
         "Aushilfsfahrer": df[df["Kategorie"] == "Aushilfsfahrer"].drop(columns="Kategorie").to_dict("records"),
     }
+
+    # Namen je Gruppe alphabetisch sortieren
+    for name in groups:
+        groups[name].sort(key=_name_sort_key)
 
     out_rows = []
     for group in GROUP_ORDER:
