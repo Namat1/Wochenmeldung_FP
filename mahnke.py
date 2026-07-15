@@ -26,7 +26,7 @@ GROUP_LABELS = set(GROUP_ORDER)
 # Disponenten (feste, rote Zeilen - manuell auszufüllen)
 DISPO_PEOPLE = [
     ("Carstensen", "Martin"), ("Lau", "Eike"), ("Pham Manh", "Chris"),
-    ("Ohlenroth", "Nadja"), ("Schulz", "Julian"), ("Aniol", "Przemyslaw"),
+    ("Ohlenroth", "Nadja"), ("Schulz", "Julian"),
     ("Packmohr", "Gina"),
 ]
 
