@@ -1,4 +1,5 @@
 import unicodedata
+import zipfile
 import streamlit as st
 import pandas as pd
 from openpyxl import load_workbook
@@ -132,7 +133,28 @@ def build_output(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def create_header_with_dates(df):
-    return [pd.to_datetime(df.iloc[1, c]).strftime("%d.%m.%Y") for c in (4, 6, 8, 10, 12, 14, 16)]
+    """Ergänzt fehlende Tagesdaten anhand der vorhandenen Wochen-Daten."""
+    date_columns = (4, 6, 8, 10, 12, 14, 16)
+    found = []
+    for day_index, col in enumerate(date_columns):
+        value = df.iloc[1, col]
+        date = pd.to_datetime(value, errors="coerce", dayfirst=True)
+        if pd.notna(date):
+            found.append((day_index, date.normalize()))
+
+    if not found:
+        raise ValueError("In Zeile 2 wurden keine Datumsangaben gefunden.")
+
+    # Sonntag ist die erste Spalte; bei fehlendem Datum auf die anderen Tage stützen.
+    week_start = found[0][1] - pd.Timedelta(days=found[0][0])
+    for day_index, date in found:
+        if date != week_start + pd.Timedelta(days=day_index):
+            raise ValueError(
+                f"Die Datumsangaben in Zeile 2 sind widersprüchlich "
+                f"({WEEKDAYS[day_index]}: {date:%d.%m.%Y})."
+            )
+
+    return [(week_start + pd.Timedelta(days=i)).strftime("%d.%m.%Y") for i in range(7)]
 
 
 def style_excel(ws, calendar_week):
@@ -216,25 +238,41 @@ st.title("Wochenarbeitsbericht Fuhrpark")
 uploaded_file = st.file_uploader("Lade eine Excel-Datei hoch", type=["xlsx"])
 
 if uploaded_file:
-    wb = load_workbook(uploaded_file, data_only=True)
-    data = pd.DataFrame(wb["Druck Fahrer"].values)
+    file_bytes = uploaded_file.getvalue()
+    if not zipfile.is_zipfile(BytesIO(file_bytes)):
+        st.error("Die hochgeladene Datei ist keine gültige XLSX-Datei. Bitte in Excel als .xlsx speichern und erneut hochladen.")
+        st.stop()
 
-    grouped = extract_grouped_data(data)
-    output_data = build_output(grouped)
+    try:
+        wb = load_workbook(BytesIO(file_bytes), data_only=True, read_only=True)
+        if "Druck Fahrer" not in wb.sheetnames:
+            raise ValueError("Das Tabellenblatt 'Druck Fahrer' fehlt.")
+        data = pd.DataFrame(wb["Druck Fahrer"].values)
+        wb.close()
 
-    dates = create_header_with_dates(data)
-    calendar_week = pd.to_datetime(dates[0], format="%d.%m.%Y").isocalendar()[1]
-    output_data.columns = ["Nachname", "Vorname"] + [f"{w} ({d})" for w, d in zip(WEEKDAYS, dates)]
+        if data.shape[0] < 3 or data.shape[1] < 18:
+            raise ValueError("Das Tabellenblatt 'Druck Fahrer' hat nicht den erwarteten Aufbau.")
 
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        output_data.to_excel(writer, index=False, sheet_name="Wochenübersicht", startrow=2)
-        style_excel(writer.sheets["Wochenübersicht"], calendar_week)
+        dates = create_header_with_dates(data)
+        grouped = extract_grouped_data(data)
+        output_data = build_output(grouped)
+        calendar_week = pd.to_datetime(dates[1], format="%d.%m.%Y").isocalendar()[1]
+        output_data.columns = ["Nachname", "Vorname"] + [f"{w} ({d})" for w, d in zip(WEEKDAYS, dates)]
+
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            output_data.to_excel(writer, index=False, sheet_name="Wochenübersicht", startrow=2)
+            # style_excel erwartet bisher die Vorwoche als Argument.
+            style_excel(writer.sheets["Wochenübersicht"], calendar_week - 1)
+
+    except (ValueError, KeyError, IndexError, zipfile.BadZipFile, OSError) as exc:
+        st.error(f"Die Tourenplanung konnte nicht verarbeitet werden: {exc}")
+        st.stop()
 
     st.success("Verarbeitung abgeschlossen.")
     st.download_button(
         "Download als Excel",
         data=output.getvalue(),
-        file_name=f"Fuhrpark_Meldung_KW_{calendar_week + 1}.xlsx",
+        file_name=f"Fuhrpark_Meldung_KW_{calendar_week}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
