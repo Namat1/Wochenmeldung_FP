@@ -28,7 +28,7 @@ GROUP_LABELS = set(GROUP_ORDER)
 DISPO_PEOPLE = [
     ("Carstensen", "Martin"), ("Lau", "Eike"), ("Pham Manh", "Chris"),
     ("Ohlenroth", "Nadja"), ("Schulz", "Julian"),
-    ("Packmohr", "Gina"), ("Hamann", "Robin"),
+    ("Packmohr", "Gina"), ("Hamann", "Robin"), ("Engel", "Mia"),
 ]
 
 # Farbschema je Gruppe: (Balkenfarbe, Zeilenfarbe)
